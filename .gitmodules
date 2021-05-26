@@ -1,0 +1,3 @@
+[submodule "lib/mg.sh"]
+	path = lib/mg.sh
+	url = https://github.com/Mitigram/mg.sh.git
