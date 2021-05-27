@@ -77,11 +77,11 @@ Note that this is a constructed example. [portainer] also has images based on
 ## Implementation
 
 Docker images can be saved and loaded to and from tar files with the
-[`save`][save] and [`load`][load]. In these tar files, there is:
+[`save`][save] and [`load`][load] subcommands. In these tar files, there is:
 
 + a configuration file in JSON format with information about the image: exposed
-  ports, entrypoint and command, shs256 sums for all layers, etc.
-+ a manifest containing the name and tage of the image. The manifest points to
+  ports, entrypoint and command, sha256 sums for all layers, etc.
++ a manifest containing the name and tag of the image. The manifest points to
   the JSON configuration and all the layers.
 + All layers of the image, each represented itself as a tar file.
 
@@ -91,7 +91,7 @@ image to be rebased and modify both its manifest and configuration to
 incorporate all the layers from the base image. The script will keep the
 remaining of the configuration as is, making sure that configuration for the
 main image is kept intact. By default, the script will also change the name of
-the image in a way that reflect the image that it has been rebased on. Once
+the image in a way that reflects the image that it has been rebased on. Once
 done, the script will tar again and call the [load] command, which gives the
 rebased image to the Docker daemon. Upon all operations completion, temporary
 storage is cleaned up.
