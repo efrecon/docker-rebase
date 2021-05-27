@@ -74,6 +74,19 @@ Note that this is a constructed example. [portainer] also has images based on
   [alpine]: https://hub.docker.com/_/alpine
   [tagname]: https://hub.docker.com/r/portainer/portainer-ce/tags?page=1&ordering=last_updated&name=-alpine
 
+## Usage
+
+This script provides help at the CLI. Call it as below from the directory of
+this repository to get a description of its command-line options and usage.
+
+```shell
+./rebase.sh --help
+```
+
+The behaviour of this script can also be controlled by a series of environment
+variables. They all start with `REBASE_`. Command-line options have precedence
+over environment variables.
+
 ## Implementation
 
 Docker images can be saved and loaded to and from tar files with the
