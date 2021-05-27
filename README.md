@@ -41,7 +41,7 @@ docker run --rm --entrypoint=sh  portainer/portainer-ce:2.5.0-busybox -c 'ls -lF
 ```
 
 should this time show the content of the image, as rebasing the image on top of
-`busybox:latest` has brung in the `sh` shell and the busybox implementation of
+`busybox:latest` has brought in the `sh` shell and the busybox implementation of
 `ls`. You should see content similar to the following, mixing the content that
 comes from the original `portainer/portainer-ce:2.5.0` but also the content of
 `busybox:latest`.
