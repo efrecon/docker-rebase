@@ -36,10 +36,19 @@ module() {
 # Source in all relevant modules. This is where most of the "stuff" will occur.
 module log locals options
 
+# This is the image that all images passed as an argument will be rebased on.
 REBASE_BASE=${REBASE_BASE:-"busybox:latest"}
 
+# This is the (relative) path of the manifest inside images. It is very unlikely
+# that you will ever have to change that!
 REBASE_MANIFEST=${REBASE_MANIFEST:-"manifest.json"}
 
+# The suffix will be appended to the name of the images that are being rebased
+# to easily segragate them from their original version. By default, it is a ~. ~
+# is a special character and will automatically be replaced by a - followed by
+# the basename of the $REBASE_BASE image name, e.g. busybox. It is possible to
+# set the suffix to an empty string, in which case the rebased image will
+# replace the original image on your host.
 REBASE_SUFFIX=${REBASE_SUFFIX:-"~"}
 
 parseopts \
