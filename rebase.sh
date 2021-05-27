@@ -1,7 +1,5 @@
 #!/usr/bin/env sh
 
-# If editing from Windows. Choose LF as line-ending
-
 set -eu
 
 # Find out where dependent modules are and load them at once before doing
@@ -38,19 +36,22 @@ module() {
 # Source in all relevant modules. This is where most of the "stuff" will occur.
 module log locals options
 
-REBASE_ROOTIMAGE=${REBASE_ROOTIMAGE:-"busybox:latest"}
+REBASE_BASE=${REBASE_BASE:-"busybox:latest"}
 
 REBASE_MANIFEST=${REBASE_MANIFEST:-"manifest.json"}
+
+REBASE_SUFFIX=${REBASE_SUFFIX:-"~"}
 
 parseopts \
   --main \
   --synopsis "$MG_CMDNAME rebase a Docker image on top of another one" \
-  --usage "$MG_CMDNAME [options] -- main (root)" \
-  --description "Will rebase the main image on top of the root image. Whenever the root image is not specified, it will be $REBASE_ROOTIMAGE" \
+  --usage "$MG_CMDNAME [options] -- image..." \
+  --description "Will rebase the images passed as a parameter on top of the base image. Their names can be changed to segregate them from the original images." \
   --prefix "REBASE" \
   --shift _begin \
   --options \
-    root-image OPTION ROOTIMAGE - "Default root image to rebase on when none given" \
+    b,base OPTION BASE - "Root image to rebase on" \
+    s,suffix OPTION SUFFIX - "Suffix to append to rebased image name. When the suffix is the special string ~ (tilda), it will automatically be composed of a dash, followed by the basename of the image to rebase on, e.g. -busybox" \
     h,help FLAG @HELP - "Print this help and exit" \
   -- "$@"
 
@@ -61,39 +62,9 @@ if ! command -v jq >&2 >/dev/null; then
   die "This script requires an installation of jq"
 fi
 
-# Just a handy variable for pattern matching sha256 sums
-sha256ptn='[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]'
-
-# When 2 or more arguments are given, we use the second argument as the root
-# image instead of the default one.
-[ $# -gt 1 ] && REBASE_ROOTIMAGE=$2
-
-# We NEED qualified images, i.e. images with proper tag names.
-if ! printf %s\\n "$1" | grep -qE '^.*:([a-zA-Z0-9_.-]{1,128})$'; then
-  die "Main docker image $1 is not fully qualified"
+if ! printf %s\\n "$REBASE_BASE" | grep -qE '^.*:([a-zA-Z0-9_.-]{1,128})$'; then
+  die "Root docker image $REBASE_BASE to rebase image(s) on is not fully qualified"
 fi
-if ! printf %s\\n "$REBASE_ROOTIMAGE" | grep -qE '^.*:([a-zA-Z0-9_.-]{1,128})$'; then
-  die "Root docker image $REBASE_ROOTIMAGE to rebase $1 on is not fully qualified"
-fi
-
-# Unpack the content of the main image to a temporary directory
-main_dir=$(mktemp -d)
-log_debug "Saving main image $1 to $main_dir"
-docker image save "$1" | tar -C "$main_dir" -xf -
-
-# Unpack the content of the root image to a temporary directory
-root_dir=$(mktemp -d)
-log_debug "Saving new root image $REBASE_ROOTIMAGE to $root_dir"
-docker image save "$REBASE_ROOTIMAGE" | tar -C "$root_dir" -xf -
-
-# Find all existing layers in the root image and copy them into the temporary
-# directory of the main image.
-log_debug "Copy all layers from $REBASE_ROOTIMAGE into $1"
-find "$root_dir" \
-  -name "$sha256ptn" \
-  -type d \
-  -maxdepth 1 \
-  -exec mv \{\} "$main_dir" \;
 
 unarray() {
   jq -cr "$1" "$2" |
@@ -107,37 +78,91 @@ sed_quote() {
   printf %s\\n "$1" | sed -e 's/"/\\"/g' -e 's/\./\\\./g'
 }
 
-# TODO: Prevent rebasing several times by ensuring that the list of layers and of diff_ids actually contain unique entries.
+rmdup() {
+  printf %s\\n "$1" |
+    tr ',' '
+' |
+    uniq |
+    paste -sd "," -
+}
 
-# TODO: Support renaming of the main image.
+# Just a handy variable for pattern matching sha256 sums
+sha256ptn='[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]'
 
-log_debug "Merge layer references into $1"
-# Find the layers references in the manifests
-root_layers=$(unarray '.[].Layers' "${root_dir%/}/$REBASE_MANIFEST")
-main_layers=$(unarray '.[].Layers' "${main_dir%/}/$REBASE_MANIFEST")
+# Unpack the content of the root image to a temporary directory
+root_dir=$(mktemp -d)
+log_debug "Saving new root image $REBASE_BASE to $root_dir"
+docker image save "$REBASE_BASE" | tar -C "$root_dir" -xf -
 
-# Replace the layers in the main manifest to the combined list of layers of both
-# images.
-all_layers=$(printf %s,%s\\n "$root_layers" "$main_layers")
-log_trace "List of layers: $all_layers"
-sed -Ei \
-  "s~\"Layers\":\[[^]]+\]~\"Layers\":\[$(sed_quote "$all_layers")\]~" \
-  "${main_dir%/}/$REBASE_MANIFEST"
+if [ "$REBASE_SUFFIX" = "~" ]; then
+  root_main=$(  printf %s\\n "$REBASE_BASE" |
+                sed -E 's/^(.*):([a-zA-Z0-9_.-]{1,128})$/\1/' )
+  REBASE_SUFFIX="-$(basename "$root_main")"
+fi
 
-# Do the same with the diff_ids, i.e. the sha256 sums of all layers.
-main_config=$(jq -cr '.[].Config' "${main_dir%/}/$REBASE_MANIFEST")
-log_debug "Merge sha256 sums into configuration for $1 at $main_config"
-root_config=$(jq -cr '.[].Config' "${root_dir%/}/$REBASE_MANIFEST")
-main_diffs=$(unarray '.rootfs.diff_ids' "${main_dir%/}/$main_config")
-root_diffs=$(unarray '.rootfs.diff_ids' "${root_dir%/}/$root_config")
-all_diffs=$(printf %s,%s\\n "$root_diffs" "$main_diffs")
-log_trace "List of sha256 sums: $all_diffs"
-sed -Ei \
-  "s~\"diff_ids\":\[[^]]+\]~\"diff_ids\":\[$(sed_quote "$all_diffs")\]~" \
-  "${main_dir%/}/$main_config"
+if [ -n "$REBASE_SUFFIX" ]; then
+  log_info "Appending $REBASE_SUFFIX to all rebased image names"
+fi
 
-log_info "Rebasing $1 on top of $REBASE_ROOTIMAGE"
-( cd "$main_dir" && tar cf - -- * | docker image load )
+for img; do
+  # We NEED qualified images, i.e. images with proper tag names.
+  if ! printf %s\\n "$img" | grep -qE '^.*:([a-zA-Z0-9_.-]{1,128})$'; then
+    log_error "Main docker image $img is not fully qualified"
+  else
+    # Unpack the content of the main image to a temporary directory
+    main_dir=$(mktemp -d)
+    log_debug "Saving main image $img to $main_dir"
+    docker image save "$img" | tar -C "$main_dir" -xf -
 
-rm -rf "$main_dir"
+    # Find all existing layers in the root image and copy them into the temporary
+    # directory of the main image.
+    log_debug "Copy all layers from $REBASE_BASE into $img"
+    find "$root_dir" \
+      -maxdepth 1 \
+      -name "$sha256ptn" \
+      -type d \
+      -exec cp -a \{\} "$main_dir" \;
+
+    log_debug "Merge layer references into $img"
+    # Find the layers references in the manifests
+    root_layers=$(unarray '.[].Layers' "${root_dir%/}/$REBASE_MANIFEST")
+    main_layers=$(unarray '.[].Layers' "${main_dir%/}/$REBASE_MANIFEST")
+
+    # Replace the layers in the main manifest to the combined list of layers of
+    # both images.
+    all_layers=$(printf %s,%s\\n "$root_layers" "$main_layers")
+    log_trace "List of layers: $all_layers"
+    sed -Ei \
+      "s~\"Layers\":\[[^]]+\]~\"Layers\":\[$(sed_quote "$all_layers")\]~" \
+      "${main_dir%/}/$REBASE_MANIFEST"
+
+    if [ -n "$REBASE_SUFFIX" ]; then
+      sed -i \
+        "s~\"${img}\"~\"${img}${REBASE_SUFFIX}\"~g" \
+        "${main_dir%/}/$REBASE_MANIFEST"
+    fi
+
+    # Do the same with the diff_ids, i.e. the sha256 sums of all layers.
+    main_config=$(jq -cr '.[].Config' "${main_dir%/}/$REBASE_MANIFEST")
+    log_debug "Merge sha256 sums into configuration for $img at $main_config"
+    root_config=$(jq -cr '.[].Config' "${root_dir%/}/$REBASE_MANIFEST")
+    main_diffs=$(unarray '.rootfs.diff_ids' "${main_dir%/}/$main_config")
+    root_diffs=$(unarray '.rootfs.diff_ids' "${root_dir%/}/$root_config")
+    all_diffs=$(printf %s,%s\\n "$root_diffs" "$main_diffs")
+    log_trace "List of sha256 sums: $all_diffs"
+    sed -Ei \
+      "s~\"diff_ids\":\[[^]]+\]~\"diff_ids\":\[$(sed_quote "$all_diffs")\]~" \
+      "${main_dir%/}/$main_config"
+
+    if [ -n "$REBASE_SUFFIX" ]; then
+      log_info "Rebasing $img on top of $REBASE_BASE as ${img}${REBASE_SUFFIX}"
+    else
+      log_info "Rebasing $img on top of $REBASE_BASE"
+    fi
+    ( cd "$main_dir" && tar cf - -- * | docker image load )
+
+    rm -rf "$main_dir"
+  fi
+done
+
 rm -rf "$root_dir"
