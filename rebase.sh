@@ -5,11 +5,22 @@ set -eu
 # Find out where dependent modules are and load them at once before doing
 # anything. This is to be able to use their services as soon as possible.
 
+
+# This is a readlink -f implementation so this script can run on MacOS
+abspath() {
+  if [ -d "$1" ]; then
+    ( cd -P -- "$1" && pwd -P )
+  elif [ -L "$1" ]; then
+    abspath "$(dirname "$1")/$(stat -c %N "$1" | awk -F ' -> ' '{print $2}' | cut -c 2- | rev | cut -c 2- | rev)"
+  else
+    printf %s\\n "$(abspath "$(dirname "$1")")/$(basename "$1")"
+  fi
+}
+
 # Build a default colon separated REBASE_LIBPATH using the root directory to
 # look for modules that we depend on. REBASE_LIBPATH can be set from the outside
-# to facilitate location. Note that this only works when there is support for
-# readlink -f, see https://github.com/ko1nksm/readlinkf for a POSIX alternative.
-REBASE_ROOTDIR=$( cd -P -- "$(dirname -- "$(command -v -- "$(readlink -f "$0")")")" && pwd -P )
+# to facilitate location.
+REBASE_ROOTDIR=$( cd -P -- "$(dirname -- "$(command -v -- "$(abspath "$0")")")" && pwd -P )
 REBASE_LIBPATH=${REBASE_LIBPATH:-${REBASE_ROOTDIR}/lib/mg.sh}
 
 # Look for modules passed as parameters in the REBASE_LIBPATH and source them.
