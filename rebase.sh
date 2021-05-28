@@ -91,10 +91,8 @@ if ! command -v jq >&2 >/dev/null; then
   die "This script requires an installation of jq"
 fi
 
-if ! printf %s\\n "$REBASE_BASE" | grep -qE '^.*:([a-zA-Z0-9_.-]{1,128})$'; then
-  die "Root docker image $REBASE_BASE to rebase image(s) on is not fully qualified"
-fi
-
+# Perform the jq query at $1 on the file at $2 to find an array and remove the
+# leading and trailing [ and ].
 unarray() {
   jq -cr "$1" "$2" |
     cut -c 2- |
@@ -103,6 +101,7 @@ unarray() {
     rev
 }
 
+# Quote a string so that it can be used as a sed expression
 sed_quote() {
   printf %s\\n "$1" | sed -e 's/"/\\"/g' -e 's/\./\\\./g'
 }
@@ -115,8 +114,45 @@ rmdup() {
     paste -sd "," -
 }
 
+# Pull the docker image passed as a parameter if it does not already exist on
+# the host. Output the name of the image whenever it is present (before or after
+# the pull).
+pull_if() {
+  if docker image inspect "${1}" >/dev/null 2>&1; then
+    printf %s\\n "${1}"
+  else
+    log_info "${1} not present locally, pulling"
+    docker image pull --quiet "${1}"; # Outputs the name of the image
+  fi
+}
+
+# Remove mentions of the docker registry and default library from the name of an
+# image.
+undocker() {
+  sed -E \
+    -e 's~^docker.(io|com)/(library|_)/~~' \
+    -e 's~^docker.(io|com)/~~'
+}
+
+# Automatically add :latest as a tag whenever necessary and try making the image
+# available at the host. Outputs the name of the image in its short form, i.e.
+# with the default docker servers and library removed.
+resolve_img() {
+  if printf %s\\n "$1" | grep -qE '@sha256:[a-f0-9]{64}$'; then
+    pull_if "$1" | undocker
+  elif printf %s\\n "$1" | grep -qE ':([a-zA-Z0-9_.-]{1,128})$'; then
+    pull_if "$1" | undocker
+  else
+    log_debug "Image $1 has nor a tag, nor a digest. Trying ${1}:latest."
+    pull_if "${1}:latest" | undocker
+  fi
+}
+
 # Just a handy variable for pattern matching sha256 sums
 sha256ptn='[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]'
+
+REBASE_BASE=$(resolve_img "$REBASE_BASE")
+[ -z "$REBASE_BASE" ] && die "Base image does not exist!"
 
 # Unpack the content of the root image to a temporary directory
 root_dir=$(mktemp -d)
@@ -134,75 +170,77 @@ if [ -n "$REBASE_SUFFIX" ]; then
 fi
 
 for img; do
-  # We NEED qualified images, i.e. images with proper tag names.
-  if ! printf %s\\n "$img" | grep -qE '^.*:([a-zA-Z0-9_.-]{1,128})$'; then
-    log_error "Main docker image $img is not fully qualified"
-  elif [ "$REBASE_DRYRUN" = "1" ]; then
-    if [ -n "$REBASE_SUFFIX" ]; then
-      log_info "Would rebase $img on top of $REBASE_BASE as ${img}${REBASE_SUFFIX}"
+  img=$(resolve_img "$img")
+  if [ -n "$img" ]; then
+    if [ "$REBASE_DRYRUN" = "1" ]; then
+      if [ -n "$REBASE_SUFFIX" ]; then
+        log_info "Would rebase $img on top of $REBASE_BASE as ${img}${REBASE_SUFFIX}"
+      else
+        log_info "Would rebase $img on top of $REBASE_BASE"
+      fi
+      printf %s%s\\n "$img" "$REBASE_SUFFIX"
     else
-      log_info "Would rebase $img on top of $REBASE_BASE"
-    fi
-    printf %s%s\\n "$img" "$REBASE_SUFFIX"
-  else
-    # Unpack the content of the main image to a temporary directory
-    main_dir=$(mktemp -d)
-    log_debug "Saving main image $img to $main_dir"
-    docker image save "$img" | tar -C "$main_dir" -xf -
+      # Unpack the content of the main image to a temporary directory
+      main_dir=$(mktemp -d)
+      log_debug "Saving image $img to $main_dir"
+      docker image save "$img" | tar -C "$main_dir" -xf -
 
-    # Find all existing layers in the root image and copy them into the temporary
-    # directory of the main image.
-    log_debug "Copy all layers from $REBASE_BASE into $img"
-    find "$root_dir" \
-      -maxdepth 1 \
-      -name "$sha256ptn" \
-      -type d \
-      -exec cp -a \{\} "$main_dir" \;
+      # Find all existing layers in the root image and copy them into the temporary
+      # directory of the main image.
+      log_debug "Copy all layers from $REBASE_BASE into $img"
+      find "$root_dir" \
+        -maxdepth 1 \
+        -name "$sha256ptn" \
+        -type d \
+        -exec cp -a \{\} "$main_dir" \;
 
-    log_debug "Merge layer references into $img"
-    # Find the layers references in the manifests
-    root_layers=$(unarray '.[].Layers' "${root_dir%/}/$REBASE_MANIFEST")
-    main_layers=$(unarray '.[].Layers' "${main_dir%/}/$REBASE_MANIFEST")
+      log_debug "Merge layer references into $img"
+      # Find the layers references in the manifests
+      root_layers=$(unarray '.[].Layers' "${root_dir%/}/$REBASE_MANIFEST")
+      main_layers=$(unarray '.[].Layers' "${main_dir%/}/$REBASE_MANIFEST")
 
-    # Replace the layers in the main manifest to the combined list of layers of
-    # both images.
-    all_layers=$(printf %s,%s\\n "$root_layers" "$main_layers")
-    log_trace "List of layers: $all_layers"
-    sed -Ei \
-      "s~\"Layers\":\[[^]]+\]~\"Layers\":\[$(sed_quote "$all_layers")\]~" \
-      "${main_dir%/}/$REBASE_MANIFEST"
-
-    if [ -n "$REBASE_SUFFIX" ]; then
-      sed -i \
-        "s~\"${img}\"~\"${img}${REBASE_SUFFIX}\"~g" \
+      # Replace the layers in the main manifest to the combined list of layers
+      # of both images.
+      all_layers=$(printf %s,%s\\n "$root_layers" "$main_layers")
+      log_trace "List of layers: $all_layers"
+      sed -Ei \
+        "s~\"Layers\":\[[^]]+\]~\"Layers\":\[$(sed_quote "$all_layers")\]~" \
         "${main_dir%/}/$REBASE_MANIFEST"
+
+      if [ -n "$REBASE_SUFFIX" ]; then
+        sed -i \
+          "s~\"${img}\"~\"${img}${REBASE_SUFFIX}\"~g" \
+          "${main_dir%/}/$REBASE_MANIFEST"
+      fi
+
+      # Do the same with the diff_ids, i.e. the sha256 sums of all layers.
+      main_config=$(jq -cr '.[].Config' "${main_dir%/}/$REBASE_MANIFEST")
+      log_debug "Merge sha256 sums into configuration for $img at $main_config"
+      root_config=$(jq -cr '.[].Config' "${root_dir%/}/$REBASE_MANIFEST")
+      main_diffs=$(unarray '.rootfs.diff_ids' "${main_dir%/}/$main_config")
+      root_diffs=$(unarray '.rootfs.diff_ids' "${root_dir%/}/$root_config")
+      all_diffs=$(printf %s,%s\\n "$root_diffs" "$main_diffs")
+      log_trace "List of sha256 sums: $all_diffs"
+      sed -Ei \
+        "s~\"diff_ids\":\[[^]]+\]~\"diff_ids\":\[$(sed_quote "$all_diffs")\]~" \
+        "${main_dir%/}/$main_config"
+
+      if [ -n "$REBASE_SUFFIX" ]; then
+        log_info "Rebasing $img on top of $REBASE_BASE as ${img}${REBASE_SUFFIX}"
+      else
+        log_info "Rebasing $img on top of $REBASE_BASE"
+      fi
+
+      if [ "$REBASE_QUIET" = "0" ]; then
+        ( cd "$main_dir" && tar cf - -- * | docker image load | sed 's/[Ll]oaded image: //g')
+      else
+        ( cd "$main_dir" && tar cf - -- * | docker image load | sed 's/[Ll]oaded image: //g') > /dev/null
+      fi
+
+      rm -rf "$main_dir"
     fi
-
-    # Do the same with the diff_ids, i.e. the sha256 sums of all layers.
-    main_config=$(jq -cr '.[].Config' "${main_dir%/}/$REBASE_MANIFEST")
-    log_debug "Merge sha256 sums into configuration for $img at $main_config"
-    root_config=$(jq -cr '.[].Config' "${root_dir%/}/$REBASE_MANIFEST")
-    main_diffs=$(unarray '.rootfs.diff_ids' "${main_dir%/}/$main_config")
-    root_diffs=$(unarray '.rootfs.diff_ids' "${root_dir%/}/$root_config")
-    all_diffs=$(printf %s,%s\\n "$root_diffs" "$main_diffs")
-    log_trace "List of sha256 sums: $all_diffs"
-    sed -Ei \
-      "s~\"diff_ids\":\[[^]]+\]~\"diff_ids\":\[$(sed_quote "$all_diffs")\]~" \
-      "${main_dir%/}/$main_config"
-
-    if [ -n "$REBASE_SUFFIX" ]; then
-      log_info "Rebasing $img on top of $REBASE_BASE as ${img}${REBASE_SUFFIX}"
-    else
-      log_info "Rebasing $img on top of $REBASE_BASE"
-    fi
-
-    if [ "$REBASE_QUIET" = "0" ]; then
-      ( cd "$main_dir" && tar cf - -- * | docker image load | sed 's/[Ll]oaded image: //g')
-    else
-      ( cd "$main_dir" && tar cf - -- * | docker image load | sed 's/[Ll]oaded image: //g') > /dev/null
-    fi
-
-    rm -rf "$main_dir"
+  else
+    log_error "Skipping image, does not exist"
   fi
 done
 
