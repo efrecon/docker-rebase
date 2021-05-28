@@ -43,6 +43,9 @@ REBASE_BASE=${REBASE_BASE:-"busybox:latest"}
 # that you will ever have to change that!
 REBASE_MANIFEST=${REBASE_MANIFEST:-"manifest.json"}
 
+# Do not output the name of the rebased images, one per line, once done.
+REBASE_QUIET=${REBASE_QUIET:-0}
+
 # The suffix will be appended to the name of the images that are being rebased
 # to easily segragate them from their original version. By default, it is a ~. ~
 # is a special character and will automatically be replaced by a - followed by
@@ -60,7 +63,8 @@ parseopts \
   --shift _begin \
   --options \
     b,base OPTION BASE - "Root image to rebase on" \
-    s,suffix OPTION SUFFIX - "Suffix to append to rebased image name. When the suffix is the special string ~ (tilda), it will automatically be composed of a dash, followed by the basename of the image to rebase on, e.g. -busybox" \
+    s,suffix OPTION SUFFIX - "Suffix to append to rebased image name. When the suffix is the special string ~ (tilde), it will automatically be composed of a dash, followed by the basename of the image to rebase on, e.g. -busybox" \
+    q,quiet,silent FLAG QUIET - "Do not output list of rebased images" \
     h,help FLAG @HELP - "Print this help and exit" \
   -- "$@"
 
@@ -168,7 +172,12 @@ for img; do
     else
       log_info "Rebasing $img on top of $REBASE_BASE"
     fi
-    ( cd "$main_dir" && tar cf - -- * | docker image load )
+
+    if [ "$REBASE_QUIET" = "0" ]; then
+      ( cd "$main_dir" && tar cf - -- * | docker image load | sed 's/[Ll]oaded image: //g')
+    else
+      ( cd "$main_dir" && tar cf - -- * | docker image load | sed 's/[Ll]oaded image: //g') > /dev/null
+    fi
 
     rm -rf "$main_dir"
   fi

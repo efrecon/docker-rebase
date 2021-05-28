@@ -8,8 +8,8 @@ similar to `docker exec -it ash` on them. This script only works with properly
 tagged image names, i.e. `alpine:latest` is valid, but specifying `alpine` will
 fail.
 
-**Note**: This project uses git [submodules], use of the two commands to make
-sure you have a copy of the submodules.
+**Note**: This project uses git [submodules], use one of the two commands below
+to make sure you have a copy of the submodules.
 
 ```shell
 git clone --recursive https://github.com/efrecon/docker-images.git
