@@ -46,6 +46,10 @@ REBASE_MANIFEST=${REBASE_MANIFEST:-"manifest.json"}
 # Do not output the name of the rebased images, one per line, once done.
 REBASE_QUIET=${REBASE_QUIET:-0}
 
+# Do not rebase, just show what would be done and output the names of the images
+# that would be rebased, if relevant.
+REBASE_DRYRUN=${REBASE_DRYRUN:-0}
+
 # The suffix will be appended to the name of the images that are being rebased
 # to easily segragate them from their original version. By default, it is a ~. ~
 # is a special character and will automatically be replaced by a - followed by
@@ -65,6 +69,7 @@ parseopts \
     b,base OPTION BASE - "Root image to rebase on" \
     s,suffix OPTION SUFFIX - "Suffix to append to rebased image name. When the suffix is the special string ~ (tilde), it will automatically be composed of a dash, followed by the basename of the image to rebase on, e.g. -busybox" \
     q,quiet,silent FLAG QUIET - "Do not output list of rebased images" \
+    n,dryrun,dry-run FLAG DRYRUN - "Do not rebase, just output the list of images that would be rebased" \
     h,help FLAG @HELP - "Print this help and exit" \
   -- "$@"
 
@@ -121,6 +126,13 @@ for img; do
   # We NEED qualified images, i.e. images with proper tag names.
   if ! printf %s\\n "$img" | grep -qE '^.*:([a-zA-Z0-9_.-]{1,128})$'; then
     log_error "Main docker image $img is not fully qualified"
+  elif [ "$REBASE_DRYRUN" = "1" ]; then
+    if [ -n "$REBASE_SUFFIX" ]; then
+      log_info "Would rebase $img on top of $REBASE_BASE as ${img}${REBASE_SUFFIX}"
+    else
+      log_info "Would rebase $img on top of $REBASE_BASE"
+    fi
+    printf %s%s\\n "$img" "$REBASE_SUFFIX"
   else
     # Unpack the content of the main image to a temporary directory
     main_dir=$(mktemp -d)
