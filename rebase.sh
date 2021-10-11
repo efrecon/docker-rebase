@@ -22,27 +22,8 @@ abspath() {
 # to facilitate location.
 REBASE_ROOTDIR=$( cd -P -- "$(dirname -- "$(command -v -- "$(abspath "$0")")")" && pwd -P )
 REBASE_LIBPATH=${REBASE_LIBPATH:-${REBASE_ROOTDIR}/lib/mg.sh}
-
-# Look for modules passed as parameters in the REBASE_LIBPATH and source them.
-# Modules are required so fail as soon as it was not possible to load a module
-module() {
-  for module in "$@"; do
-    OIFS=$IFS
-    IFS=:
-    for d in $REBASE_LIBPATH; do
-      if [ -f "${d}/${module}.sh" ]; then
-        # shellcheck disable=SC1090
-        . "${d}/${module}.sh"
-        IFS=$OIFS
-        break
-      fi
-    done
-    if [ "$IFS" = ":" ]; then
-      echo "Cannot find module $module in $REBASE_LIBPATH !" >& 2
-      exit 1
-    fi
-  done
-}
+# shellcheck source=./lib/mg.sh/bootstrap.sh disable=SC1091
+. "${REBASE_LIBPATH%/}/bootstrap.sh"
 
 # Source in all relevant modules. This is where most of the "stuff" will occur.
 module log locals options
